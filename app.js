@@ -38,16 +38,18 @@ class SimpleMarkdownParser {
     }
 }
 
-// Simple Word document generator using HTML export
+// Enhanced Word document generator with MathML support
 class SimpleWordGenerator {
     constructor() {
         this.wordContent = '';
     }
     
-    async generateWordContent(html) {
-        // Create a basic Word-compatible HTML document
+    async generateWordContent(html, mathExpressions) {
+        // 创建Word兼容的HTML文档，包含MathML命名空间
         const wordHtml = `<!DOCTYPE html>
-<html xmlns:m="http://schemas.microsoft.com/office/2004/12/omml">
+<html xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math" 
+      xmlns:mml="http://www.w3.org/1998/Math/MathML" 
+      xmlns:o="urn:schemas-microsoft-com:office:office">
 <head>
     <meta charset="UTF-8">
     <title>Converted Document</title>
@@ -61,8 +63,10 @@ class SimpleWordGenerator {
         pre { font-family: 'Courier New', monospace; background-color: #f5f5f5; padding: 10px; margin: 10px 0; }
         strong { font-weight: bold; }
         em { font-style: italic; }
-        .math-display { text-align: center; margin: 10px 0; font-style: italic; }
-        .math-inline { font-style: italic; }
+        .math-display { text-align: center; margin: 10px 0; }
+        .math-inline { }
+        /* MathML specific styles */
+        mml|math { font-size: 12pt; }
     </style>
 </head>
 <body>
@@ -74,11 +78,14 @@ ${html}
     }
     
     downloadAsWord(content, filename) {
-        const blob = new Blob([content], { type: 'application/msword' });
+        // 使用Office Open XML格式 (.docx)可以更好地支持MathML
+        const blob = new Blob([content], { 
+            type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' 
+        });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = filename + '.doc';
+        a.download = filename + '.doc'; // 仍使用.doc格式，因为我们用的是HTML格式
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -303,6 +310,50 @@ class MarkdownToWordConverter {
         }
     }
 
+    // 将LaTeX公式转换为MathML
+    async convertLatexToMathML(latex, isDisplay) {
+        if (!this.mathJaxLoaded || typeof MathJax === 'undefined') {
+            // 如果MathJax不可用，返回原始LaTeX
+            return latex;
+        }
+
+        try {
+            // 创建临时元素来渲染公式
+            const tempDiv = document.createElement('div');
+            tempDiv.style.visibility = 'hidden';
+            tempDiv.style.position = 'absolute';
+            document.body.appendChild(tempDiv);
+
+            // 添加公式到临时元素
+            if (isDisplay) {
+                tempDiv.innerHTML = `\\[${latex}\\]`;
+            } else {
+                tempDiv.innerHTML = `\\(${latex}\\)`;
+            }
+
+            // 让MathJax处理该元素
+            await MathJax.typesetPromise([tempDiv]);
+
+            // 获取生成的MathML
+            const mathElement = tempDiv.querySelector('.MathJax');
+            
+            if (mathElement && mathElement.querySelector('math')) {
+                // 从MathJax元素中提取MathML
+                const mathML = mathElement.querySelector('math').outerHTML;
+                document.body.removeChild(tempDiv);
+                return mathML;
+            } else {
+                // 如果无法获取MathML，尝试获取整个MathJax元素
+                const mathJaxHTML = mathElement ? mathElement.outerHTML : '';
+                document.body.removeChild(tempDiv);
+                return mathJaxHTML || `<span style="font-style:italic;">${latex}</span>`;
+            }
+        } catch (error) {
+            console.error('Error converting LaTeX to MathML:', error);
+            return `<span style="font-style:italic;">${latex}</span>`;
+        }
+    }
+
     async convertToWord() {
         const markdownText = this.markdownInput.value;
         
@@ -315,32 +366,35 @@ class MarkdownToWordConverter {
         this.convertBtn.textContent = '转换中...';
         
         try {
-            // Preprocess math formulas
+            // 预处理数学公式
             const { text: processedText, mathExpressions } = this.preprocessMath(markdownText);
             
-            // Convert markdown to HTML
+            // 转换markdown为HTML
             let html = this.parser.parse(processedText);
             
-            // 修改：直接将数学公式内容作为文本插入，而不是使用占位符
-            mathExpressions.forEach((math) => {
+            // 替换数学公式为MathML
+            for (let i = 0; i < mathExpressions.length; i++) {
+                const math = mathExpressions[i];
                 const placeholder = math.placeholder;
+                
+                // 将LaTeX转换为MathML
+                const mathML = await this.convertLatexToMathML(math.content, math.type === 'display');
+                
                 if (math.type === 'display') {
-                    // 对于块级公式，使用居中显示的斜体
                     html = html.replace(
                         new RegExp(placeholder, 'g'),
-                        `<div style="text-align:center; font-style:italic; margin:10px 0;">${math.content}</div>`
+                        `<div class="math-display">${mathML}</div>`
                     );
                 } else {
-                    // 对于行内公式，使用斜体
                     html = html.replace(
                         new RegExp(placeholder, 'g'),
-                        `<span style="font-style:italic;">${math.content}</span>`
+                        `<span class="math-inline">${mathML}</span>`
                     );
                 }
-            });
+            }
             
             // 生成Word文档
-            const wordContent = await this.wordGenerator.generateWordContent(html);
+            const wordContent = await this.wordGenerator.generateWordContent(html, mathExpressions);
             const fileName = `markdown-document-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}`;
             this.wordGenerator.downloadAsWord(wordContent, fileName);
             
