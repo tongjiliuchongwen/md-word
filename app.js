@@ -38,21 +38,28 @@ class SimpleMarkdownParser {
     }
 }
 
-// Enhanced Word document generator with MathML support
+// Word document generator with enhanced math support
 class SimpleWordGenerator {
     constructor() {
         this.wordContent = '';
     }
     
-    async generateWordContent(html, mathExpressions) {
-        // 创建Word兼容的HTML文档，包含MathML命名空间
+    async generateWordContent(html) {
+        // Create a Word-compatible HTML document with special formula namespace
         const wordHtml = `<!DOCTYPE html>
-<html xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math" 
-      xmlns:mml="http://www.w3.org/1998/Math/MathML" 
+<html xmlns:w="urn:schemas-microsoft-com:office:word"
+      xmlns:m="http://schemas.microsoft.com/office/2004/12/omml"
       xmlns:o="urn:schemas-microsoft-com:office:office">
 <head>
     <meta charset="UTF-8">
     <title>Converted Document</title>
+    <xml>
+        <w:WordDocument>
+            <w:View>Print</w:View>
+            <w:Zoom>100</w:Zoom>
+            <w:DoNotOptimizeForBrowser/>
+        </w:WordDocument>
+    </xml>
     <style>
         body { font-family: 'Times New Roman', serif; font-size: 12pt; line-height: 1.5; margin: 1in; }
         h1 { font-size: 18pt; font-weight: bold; margin: 12pt 0; }
@@ -64,9 +71,9 @@ class SimpleWordGenerator {
         strong { font-weight: bold; }
         em { font-style: italic; }
         .math-display { text-align: center; margin: 10px 0; }
-        .math-inline { }
-        /* MathML specific styles */
-        mml|math { font-size: 12pt; }
+        /* Word specific formula styles */
+        .MathJax_SVG { display: inline-block; }
+        .MathJax_SVG_Display { display: block; margin: 1em 0; text-align: center; }
     </style>
 </head>
 <body>
@@ -78,14 +85,12 @@ ${html}
     }
     
     downloadAsWord(content, filename) {
-        // 使用Office Open XML格式 (.docx)可以更好地支持MathML
-        const blob = new Blob([content], { 
-            type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' 
-        });
+        // 使用.doc格式，确保公式被正确处理
+        const blob = new Blob([content], { type: 'application/msword' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = filename + '.doc'; // 仍使用.doc格式，因为我们用的是HTML格式
+        a.download = filename + '.doc';
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -310,47 +315,29 @@ class MarkdownToWordConverter {
         }
     }
 
-    // 将LaTeX公式转换为MathML
-    async convertLatexToMathML(latex, isDisplay) {
-        if (!this.mathJaxLoaded || typeof MathJax === 'undefined') {
-            // 如果MathJax不可用，返回原始LaTeX
-            return latex;
-        }
-
-        try {
-            // 创建临时元素来渲染公式
-            const tempDiv = document.createElement('div');
-            tempDiv.style.visibility = 'hidden';
-            tempDiv.style.position = 'absolute';
-            document.body.appendChild(tempDiv);
-
-            // 添加公式到临时元素
-            if (isDisplay) {
-                tempDiv.innerHTML = `\\[${latex}\\]`;
-            } else {
-                tempDiv.innerHTML = `\\(${latex}\\)`;
-            }
-
-            // 让MathJax处理该元素
-            await MathJax.typesetPromise([tempDiv]);
-
-            // 获取生成的MathML
-            const mathElement = tempDiv.querySelector('.MathJax');
-            
-            if (mathElement && mathElement.querySelector('math')) {
-                // 从MathJax元素中提取MathML
-                const mathML = mathElement.querySelector('math').outerHTML;
-                document.body.removeChild(tempDiv);
-                return mathML;
-            } else {
-                // 如果无法获取MathML，尝试获取整个MathJax元素
-                const mathJaxHTML = mathElement ? mathElement.outerHTML : '';
-                document.body.removeChild(tempDiv);
-                return mathJaxHTML || `<span style="font-style:italic;">${latex}</span>`;
-            }
-        } catch (error) {
-            console.error('Error converting LaTeX to MathML:', error);
-            return `<span style="font-style:italic;">${latex}</span>`;
+    // 创建Word专用的公式标记
+    createWordEquation(latex, isDisplay) {
+        // 为行内公式和块级公式使用不同的Word公式格式
+        if (isDisplay) {
+            // 块级公式 - 使用Word的居中公式格式
+            return `<p style="text-align:center">
+<span style="mso-element:equation;mso-element-wrap:around">
+<![if !msEquation]>
+<v:shape id="_x0000_i1025" type="#_x0000_t75">
+</v:shape>
+<![endif]>
+<![if msEquation]>
+<m:oMath>
+<m:r><m:t>${latex}</m:t></m:r>
+</m:oMath>
+<![endif]>
+</span>
+</p>`;
+        } else {
+            // 行内公式 - 使用Word的行内公式格式
+            return `<span style="mso-element:field-begin"></span>
+<span style="mso-spacerun:yes">&nbsp;</span>EQ ${latex} 
+<span style="mso-element:field-end"></span>`;
         }
     }
 
@@ -372,29 +359,33 @@ class MarkdownToWordConverter {
             // 转换markdown为HTML
             let html = this.parser.parse(processedText);
             
-            // 替换数学公式为MathML
+            // 使用Word识别的公式格式替换数学公式
             for (let i = 0; i < mathExpressions.length; i++) {
                 const math = mathExpressions[i];
                 const placeholder = math.placeholder;
                 
-                // 将LaTeX转换为MathML
-                const mathML = await this.convertLatexToMathML(math.content, math.type === 'display');
-                
+                // 使用Word专用公式标记
                 if (math.type === 'display') {
+                    // 块级公式
                     html = html.replace(
                         new RegExp(placeholder, 'g'),
-                        `<div class="math-display">${mathML}</div>`
+                        `<!--[if gte msEquation 12]>
+<m:oMathPara><m:oMath>${math.content}</m:oMath></m:oMathPara>
+<![endif]-->`
                     );
                 } else {
+                    // 行内公式
                     html = html.replace(
                         new RegExp(placeholder, 'g'),
-                        `<span class="math-inline">${mathML}</span>`
+                        `<!--[if gte msEquation 12]>
+<m:oMath>${math.content}</m:oMath>
+<![endif]-->`
                     );
                 }
             }
             
             // 生成Word文档
-            const wordContent = await this.wordGenerator.generateWordContent(html, mathExpressions);
+            const wordContent = await this.wordGenerator.generateWordContent(html);
             const fileName = `markdown-document-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}`;
             this.wordGenerator.downloadAsWord(wordContent, fileName);
             
