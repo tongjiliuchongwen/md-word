@@ -47,7 +47,7 @@ class SimpleWordGenerator {
     async generateWordContent(html) {
         // Create a basic Word-compatible HTML document
         const wordHtml = `<!DOCTYPE html>
-<html>
+<html xmlns:m="http://schemas.microsoft.com/office/2004/12/omml">
 <head>
     <meta charset="UTF-8">
     <title>Converted Document</title>
@@ -321,23 +321,25 @@ class MarkdownToWordConverter {
             // Convert markdown to HTML
             let html = this.parser.parse(processedText);
             
-            // For Word export, replace math placeholders with original expressions
-            mathExpressions.forEach((math, index) => {
+            // 修改：直接将数学公式内容作为文本插入，而不是使用占位符
+            mathExpressions.forEach((math) => {
                 const placeholder = math.placeholder;
                 if (math.type === 'display') {
+                    // 对于块级公式，使用居中显示的斜体
                     html = html.replace(
                         new RegExp(placeholder, 'g'),
-                        `<div class="math-display">${math.original}</div>`
+                        `<div style="text-align:center; font-style:italic; margin:10px 0;">${math.content}</div>`
                     );
                 } else {
+                    // 对于行内公式，使用斜体
                     html = html.replace(
                         new RegExp(placeholder, 'g'),
-                        `<span class="math-inline">${math.original}</span>`
+                        `<span style="font-style:italic;">${math.content}</span>`
                     );
                 }
             });
             
-            // Generate Word document
+            // 生成Word文档
             const wordContent = await this.wordGenerator.generateWordContent(html);
             const fileName = `markdown-document-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}`;
             this.wordGenerator.downloadAsWord(wordContent, fileName);
