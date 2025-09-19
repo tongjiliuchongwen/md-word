@@ -38,63 +38,297 @@ class SimpleMarkdownParser {
     }
 }
 
-// Word document generator with enhanced math support
-class SimpleWordGenerator {
-    constructor() {
-        this.wordContent = '';
+// DocxGenerator class for creating Word documents with docx.js
+class DocxGenerator {
+    constructor() {}
+    
+    async generateWordDocument(markdown, mathExpressions) {
+        try {
+            if (typeof docx === 'undefined') {
+                throw new Error('docx.js库未加载，请确保已正确引入docx.js');
+            }
+            
+            const { Document, Paragraph, TextRun, HeadingLevel, AlignmentType, BorderStyle } = docx;
+            
+            // 创建一个新的文档
+            const doc = new Document({
+                sections: [{
+                    properties: {},
+                    children: []
+                }]
+            });
+            
+            // 处理带有数学公式的Markdown
+            const sections = this.processMarkdownWithMath(markdown, mathExpressions);
+            
+            // 添加内容到文档
+            for (const section of sections) {
+                switch (section.type) {
+                    case 'heading1':
+                        doc.addParagraph(new Paragraph({
+                            text: section.content,
+                            heading: HeadingLevel.HEADING_1
+                        }));
+                        break;
+                    
+                    case 'heading2':
+                        doc.addParagraph(new Paragraph({
+                            text: section.content,
+                            heading: HeadingLevel.HEADING_2
+                        }));
+                        break;
+                    
+                    case 'heading3':
+                        doc.addParagraph(new Paragraph({
+                            text: section.content,
+                            heading: HeadingLevel.HEADING_3
+                        }));
+                        break;
+                    
+                    case 'paragraph':
+                        // 处理带有行内公式的段落
+                        if (section.hasMath) {
+                            const children = [];
+                            let currentText = '';
+                            
+                            for (let i = 0; i < section.segments.length; i++) {
+                                const segment = section.segments[i];
+                                
+                                if (segment.type === 'text') {
+                                    currentText += segment.content;
+                                } else if (segment.type === 'math') {
+                                    // 先添加前面的文本
+                                    if (currentText) {
+                                        children.push(new TextRun(currentText));
+                                        currentText = '';
+                                    }
+                                    
+                                    // 添加公式（使用斜体模拟，因为直接的公式支持有限）
+                                    children.push(
+                                        new TextRun({
+                                            text: segment.content,
+                                            italics: true
+                                        })
+                                    );
+                                }
+                            }
+                            
+                            // 添加最后的文本
+                            if (currentText) {
+                                children.push(new TextRun(currentText));
+                            }
+                            
+                            doc.addParagraph(new Paragraph({ children }));
+                        } else {
+                            // 没有公式的普通段落
+                            doc.addParagraph(new Paragraph({
+                                text: section.content
+                            }));
+                        }
+                        break;
+                    
+                    case 'display-math':
+                        // 块级公式居中显示
+                        doc.addParagraph(new Paragraph({
+                            text: section.content,
+                            alignment: AlignmentType.CENTER,
+                            italics: true
+                        }));
+                        break;
+                    
+                    case 'code':
+                        // 代码块使用等宽字体和边框
+                        doc.addParagraph(new Paragraph({
+                            text: section.content,
+                            style: {
+                                font: "Courier New",
+                                size: 20,
+                            },
+                            border: {
+                                top: { style: BorderStyle.SINGLE, size: 1, color: "auto" },
+                                bottom: { style: BorderStyle.SINGLE, size: 1, color: "auto" },
+                                left: { style: BorderStyle.SINGLE, size: 1, color: "auto" },
+                                right: { style: BorderStyle.SINGLE, size: 1, color: "auto" }
+                            }
+                        }));
+                        break;
+                }
+            }
+            
+            return doc;
+        } catch (error) {
+            console.error('生成Word文档时出错:', error);
+            throw error;
+        }
     }
     
-    async generateWordContent(html) {
-        // Create a Word-compatible HTML document with special formula namespace
-        const wordHtml = `<!DOCTYPE html>
-<html xmlns:w="urn:schemas-microsoft-com:office:word"
-      xmlns:m="http://schemas.microsoft.com/office/2004/12/omml"
-      xmlns:o="urn:schemas-microsoft-com:office:office">
-<head>
-    <meta charset="UTF-8">
-    <title>Converted Document</title>
-    <xml>
-        <w:WordDocument>
-            <w:View>Print</w:View>
-            <w:Zoom>100</w:Zoom>
-            <w:DoNotOptimizeForBrowser/>
-        </w:WordDocument>
-    </xml>
-    <style>
-        body { font-family: 'Times New Roman', serif; font-size: 12pt; line-height: 1.5; margin: 1in; }
-        h1 { font-size: 18pt; font-weight: bold; margin: 12pt 0; }
-        h2 { font-size: 16pt; font-weight: bold; margin: 10pt 0; }
-        h3 { font-size: 14pt; font-weight: bold; margin: 8pt 0; }
-        p { margin: 6pt 0; text-align: justify; }
-        code { font-family: 'Courier New', monospace; background-color: #f5f5f5; padding: 2px 4px; }
-        pre { font-family: 'Courier New', monospace; background-color: #f5f5f5; padding: 10px; margin: 10px 0; }
-        strong { font-weight: bold; }
-        em { font-style: italic; }
-        .math-display { text-align: center; margin: 10px 0; }
-        /* Word specific formula styles */
-        .MathJax_SVG { display: inline-block; }
-        .MathJax_SVG_Display { display: block; margin: 1em 0; text-align: center; }
-    </style>
-</head>
-<body>
-${html}
-</body>
-</html>`;
+    // 处理Markdown文本和数学公式
+    processMarkdownWithMath(markdown, mathExpressions) {
+        const sections = [];
+        const lines = markdown.split('\n');
         
-        return wordHtml;
+        let currentParagraph = '';
+        
+        // 构建一个查找表，用于快速查找占位符对应的公式
+        const mathLookup = {};
+        mathExpressions.forEach(math => {
+            mathLookup[math.placeholder] = math;
+        });
+        
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            
+            // 处理标题
+            if (line.startsWith('# ')) {
+                if (currentParagraph) {
+                    sections.push({ type: 'paragraph', content: currentParagraph });
+                    currentParagraph = '';
+                }
+                sections.push({ type: 'heading1', content: line.substring(2) });
+                continue;
+            }
+            
+            if (line.startsWith('## ')) {
+                if (currentParagraph) {
+                    sections.push({ type: 'paragraph', content: currentParagraph });
+                    currentParagraph = '';
+                }
+                sections.push({ type: 'heading2', content: line.substring(3) });
+                continue;
+            }
+            
+            if (line.startsWith('### ')) {
+                if (currentParagraph) {
+                    sections.push({ type: 'paragraph', content: currentParagraph });
+                    currentParagraph = '';
+                }
+                sections.push({ type: 'heading3', content: line.substring(4) });
+                continue;
+            }
+            
+            // 检查是否为数学公式占位符
+            const displayMathMatch = line.match(/^__MATH_DISPLAY_(\d+)__$/);
+            if (displayMathMatch) {
+                if (currentParagraph) {
+                    sections.push({ type: 'paragraph', content: currentParagraph });
+                    currentParagraph = '';
+                }
+                
+                const mathIndex = parseInt(displayMathMatch[1]);
+                const math = mathExpressions[mathIndex];
+                
+                if (math) {
+                    sections.push({ 
+                        type: 'display-math', 
+                        content: math.content 
+                    });
+                }
+                continue;
+            }
+            
+            // 检查是否是空行（段落分隔符）
+            if (line.trim() === '') {
+                if (currentParagraph) {
+                    sections.push({ type: 'paragraph', content: currentParagraph });
+                    currentParagraph = '';
+                }
+                continue;
+            }
+            
+            // 处理行内公式
+            if (line.includes('__MATH_INLINE_')) {
+                // 检查这一行是否包含行内公式
+                const hasMath = /(__MATH_INLINE_\d+__)/.test(line);
+                
+                if (hasMath) {
+                    // 分割文本和公式
+                    const segments = [];
+                    let remainingLine = line;
+                    
+                    // 提取所有行内公式
+                    const inlineMathRegex = /__MATH_INLINE_(\d+)__/g;
+                    let match;
+                    let lastIndex = 0;
+                    
+                    while ((match = inlineMathRegex.exec(line)) !== null) {
+                        // 添加公式前的文本
+                        const beforeMath = line.substring(lastIndex, match.index);
+                        if (beforeMath) {
+                            segments.push({ type: 'text', content: beforeMath });
+                        }
+                        
+                        // 添加公式
+                        const mathIndex = parseInt(match[1]);
+                        const math = mathExpressions[mathIndex];
+                        
+                        if (math) {
+                            segments.push({ 
+                                type: 'math', 
+                                content: math.content 
+                            });
+                        }
+                        
+                        lastIndex = match.index + match[0].length;
+                    }
+                    
+                    // 添加最后一个公式后的文本
+                    const afterLastMath = line.substring(lastIndex);
+                    if (afterLastMath) {
+                        segments.push({ type: 'text', content: afterLastMath });
+                    }
+                    
+                    if (currentParagraph) {
+                        sections.push({ type: 'paragraph', content: currentParagraph });
+                        currentParagraph = '';
+                    }
+                    
+                    sections.push({ 
+                        type: 'paragraph', 
+                        hasMath: true, 
+                        segments: segments 
+                    });
+                    continue;
+                }
+            }
+            
+            // 普通文本行
+            if (currentParagraph) {
+                currentParagraph += ' ' + line;
+            } else {
+                currentParagraph = line;
+            }
+        }
+        
+        // 添加最后的段落
+        if (currentParagraph) {
+            sections.push({ type: 'paragraph', content: currentParagraph });
+        }
+        
+        return sections;
     }
     
-    downloadAsWord(content, filename) {
-        // 使用.doc格式，确保公式被正确处理
-        const blob = new Blob([content], { type: 'application/msword' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename + '.doc';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+    // 保存并下载文档
+    async saveDocumentToFile(doc, filename) {
+        try {
+            // 使用docx库的Packer来打包文档
+            const blob = await doc.save();
+            
+            // 创建下载链接
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            document.body.appendChild(a);
+            a.style.display = "none";
+            a.href = url;
+            a.download = filename;
+            a.click();
+            
+            // 清理
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+        } catch (error) {
+            console.error('保存文档时出错:', error);
+            throw error;
+        }
     }
 }
 
@@ -102,7 +336,7 @@ ${html}
 class MarkdownToWordConverter {
     constructor() {
         this.parser = new SimpleMarkdownParser();
-        this.wordGenerator = new SimpleWordGenerator();
+        this.docxGenerator = new DocxGenerator();
         this.mathJaxLoaded = false;
         this.initializeElements();
         this.setupEventListeners();
@@ -315,32 +549,6 @@ class MarkdownToWordConverter {
         }
     }
 
-    // 创建Word专用的公式标记
-    createWordEquation(latex, isDisplay) {
-        // 为行内公式和块级公式使用不同的Word公式格式
-        if (isDisplay) {
-            // 块级公式 - 使用Word的居中公式格式
-            return `<p style="text-align:center">
-<span style="mso-element:equation;mso-element-wrap:around">
-<![if !msEquation]>
-<v:shape id="_x0000_i1025" type="#_x0000_t75">
-</v:shape>
-<![endif]>
-<![if msEquation]>
-<m:oMath>
-<m:r><m:t>${latex}</m:t></m:r>
-</m:oMath>
-<![endif]>
-</span>
-</p>`;
-        } else {
-            // 行内公式 - 使用Word的行内公式格式
-            return `<span style="mso-element:field-begin"></span>
-<span style="mso-spacerun:yes">&nbsp;</span>EQ ${latex} 
-<span style="mso-element:field-end"></span>`;
-        }
-    }
-
     async convertToWord() {
         const markdownText = this.markdownInput.value;
         
@@ -353,45 +561,24 @@ class MarkdownToWordConverter {
         this.convertBtn.textContent = '转换中...';
         
         try {
+            // 检查docx.js是否可用
+            if (typeof docx === 'undefined') {
+                throw new Error('docx.js库未加载，请确保已正确引入docx.js');
+            }
+            
             // 预处理数学公式
             const { text: processedText, mathExpressions } = this.preprocessMath(markdownText);
             
-            // 转换markdown为HTML
-            let html = this.parser.parse(processedText);
+            // 使用docx.js生成Word文档
+            const doc = await this.docxGenerator.generateWordDocument(processedText, mathExpressions);
             
-            // 使用Word识别的公式格式替换数学公式
-            for (let i = 0; i < mathExpressions.length; i++) {
-                const math = mathExpressions[i];
-                const placeholder = math.placeholder;
-                
-                // 使用Word专用公式标记
-                if (math.type === 'display') {
-                    // 块级公式
-                    html = html.replace(
-                        new RegExp(placeholder, 'g'),
-                        `<!--[if gte msEquation 12]>
-<m:oMathPara><m:oMath>${math.content}</m:oMath></m:oMathPara>
-<![endif]-->`
-                    );
-                } else {
-                    // 行内公式
-                    html = html.replace(
-                        new RegExp(placeholder, 'g'),
-                        `<!--[if gte msEquation 12]>
-<m:oMath>${math.content}</m:oMath>
-<![endif]-->`
-                    );
-                }
-            }
-            
-            // 生成Word文档
-            const wordContent = await this.wordGenerator.generateWordContent(html);
-            const fileName = `markdown-document-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}`;
-            this.wordGenerator.downloadAsWord(wordContent, fileName);
+            // 保存并下载文档
+            const fileName = `markdown-document-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.docx`;
+            await this.docxGenerator.saveDocumentToFile(doc, fileName);
             
         } catch (error) {
             console.error('Error converting to Word:', error);
-            alert('转换过程中出现错误，请稍后重试');
+            alert(`转换过程中出现错误: ${error.message}`);
         } finally {
             this.convertBtn.disabled = false;
             this.convertBtn.textContent = '转换为 Word';
