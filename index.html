@@ -86,8 +86,12 @@ $$"></textarea>
         </footer>
     </div>
     
-    <!-- 首先加载docx.js库，然后加载依赖它的app.js -->
+    <!-- 首先加载docx.js库，然后加载 MathML 转换器和应用逻辑 -->
     <script src="docx.js"></script>
+    <script type="module">
+        import { mml2omml } from './mathml2omml.js';
+        window.mml2omml = mml2omml;
+    </script>
     <script src="app.js"></script>
 </body>
 </html>
