@@ -173,7 +173,9 @@ class DocxGenerator {
         // 构建一个查找表，用于快速查找占位符对应的公式
         const mathLookup = {};
         mathExpressions.forEach(math => {
-            mathLookup[math.placeholder] = math;
+            if (math && math.placeholder) {
+                mathLookup[math.placeholder] = math;
+            }
         });
         
         for (let i = 0; i < lines.length; i++) {
@@ -208,21 +210,23 @@ class DocxGenerator {
             }
             
             // 检查是否为数学公式占位符
-            const displayMathMatch = line.match(/^__MATH_DISPLAY_(\d+)__$/);
+            const displayMathMatch = line.match(/^(__MATH_DISPLAY_\d+__)$/);
             if (displayMathMatch) {
                 if (currentParagraph) {
                     sections.push({ type: 'paragraph', content: currentParagraph });
                     currentParagraph = '';
                 }
-                
-                const mathIndex = parseInt(displayMathMatch[1]);
-                const math = mathExpressions[mathIndex];
-                
+
+                const placeholder = displayMathMatch[1];
+                const math = mathLookup[placeholder];
+
                 if (math) {
-                    sections.push({ 
-                        type: 'display-math', 
-                        content: math.content 
+                    sections.push({
+                        type: 'display-math',
+                        content: math.original || math.content
                     });
+                } else {
+                    sections.push({ type: 'paragraph', content: line });
                 }
                 continue;
             }
@@ -244,13 +248,11 @@ class DocxGenerator {
                 if (hasMath) {
                     // 分割文本和公式
                     const segments = [];
-                    let remainingLine = line;
-                    
                     // 提取所有行内公式
-                    const inlineMathRegex = /__MATH_INLINE_(\d+)__/g;
+                    const inlineMathRegex = /__MATH_INLINE_\d+__/g;
                     let match;
                     let lastIndex = 0;
-                    
+
                     while ((match = inlineMathRegex.exec(line)) !== null) {
                         // 添加公式前的文本
                         const beforeMath = line.substring(lastIndex, match.index);
@@ -259,16 +261,18 @@ class DocxGenerator {
                         }
                         
                         // 添加公式
-                        const mathIndex = parseInt(match[1]);
-                        const math = mathExpressions[mathIndex];
-                        
+                        const placeholder = match[0];
+                        const math = mathLookup[placeholder];
+
                         if (math) {
-                            segments.push({ 
-                                type: 'math', 
-                                content: math.content 
+                            segments.push({
+                                type: 'math',
+                                content: math.original || math.content
                             });
+                        } else {
+                            segments.push({ type: 'text', content: placeholder });
                         }
-                        
+
                         lastIndex = match.index + match[0].length;
                     }
                     
@@ -312,7 +316,13 @@ class DocxGenerator {
     async saveDocumentToFile(doc, filename) {
         try {
             // 使用docx库的Packer来打包文档
-            const blob = await doc.save();
+            const { Packer } = docx;
+
+            if (!Packer || typeof Packer.toBlob !== 'function') {
+                throw new Error('当前 docx.js 版本不支持直接保存文档，请检查库是否正确加载');
+            }
+
+            const blob = await Packer.toBlob(doc);
             
             // 创建下载链接
             const url = window.URL.createObjectURL(blob);
