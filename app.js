@@ -1,3 +1,24 @@
+const WORD_NAMESPACE = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+const MATH_NAMESPACE = 'http://schemas.openxmlformats.org/officeDocument/2006/math';
+
+function escapeHtml(value) {
+    if (value === undefined || value === null) {
+        return '';
+    }
+
+    const stringValue = String(value);
+
+    const map = {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+    };
+
+    return stringValue.replace(/[&<>"']/g, (char) => map[char]);
+}
+
 // Simple Markdown to HTML converter
 class SimpleMarkdownParser {
     parse(markdown) {
@@ -41,6 +62,81 @@ class SimpleMarkdownParser {
 // DocxGenerator class for creating Word documents with docx.js
 class DocxGenerator {
     constructor() {}
+
+    stripOmmlNamespaces(omml) {
+        if (!omml) {
+            return '';
+        }
+
+        return omml
+            .replace(/\sxmlns:m="[^"]*"/g, '')
+            .replace(/\sxmlns:w="[^"]*"/g, '');
+    }
+
+    createInlineMathRun(omml, ImportedXmlComponent) {
+        if (!omml || !ImportedXmlComponent) {
+            return null;
+        }
+
+        const sanitizedOmml = this.stripOmmlNamespaces(omml);
+        if (!sanitizedOmml.trim()) {
+            return null;
+        }
+
+        const runXml = `
+            <w:r xmlns:w="${WORD_NAMESPACE}" xmlns:m="${MATH_NAMESPACE}">
+                <w:rPr>
+                    <w:rFonts ascii="Cambria Math" hAnsi="Cambria Math"/>
+                </w:rPr>
+                ${sanitizedOmml}
+            </w:r>
+        `.trim();
+
+        try {
+            return ImportedXmlComponent.fromXmlString(runXml);
+        } catch (error) {
+            console.warn('无法将 MathML 内联转换为 Word 运行，使用文本回退。', error);
+            return null;
+        }
+    }
+
+    createDisplayMathComponent(omml, ImportedXmlComponent) {
+        if (!omml || !ImportedXmlComponent) {
+            return null;
+        }
+
+        let sanitizedOmml = this.stripOmmlNamespaces(omml).trim();
+        if (!sanitizedOmml) {
+            return null;
+        }
+
+        if (!/^<m:oMath/.test(sanitizedOmml)) {
+            sanitizedOmml = `<m:oMath>${sanitizedOmml}</m:oMath>`;
+        }
+
+        const mathParaXml = `<m:oMathPara xmlns:m="${MATH_NAMESPACE}" xmlns:w="${WORD_NAMESPACE}">${sanitizedOmml}</m:oMathPara>`;
+
+        try {
+            return ImportedXmlComponent.fromXmlString(mathParaXml.trim());
+        } catch (error) {
+            console.warn('无法创建块级数学组件，使用文本回退。', error);
+            return null;
+        }
+    }
+
+    createDisplayMathParagraph(omml, rawTex, mathml, Paragraph, ImportedXmlComponent) {
+        const mathComponent = this.createDisplayMathComponent(omml, ImportedXmlComponent);
+
+        if (mathComponent) {
+            return new Paragraph({
+                children: [mathComponent]
+            });
+        }
+
+        return new Paragraph({
+            text: mathml || rawTex || ''
+        });
+    }
     
     async generateWordDocument(markdown, mathExpressions) {
         try {
@@ -48,7 +144,7 @@ class DocxGenerator {
                 throw new Error('docx.js库未加载，请确保已正确引入docx.js');
             }
             
-            const { Document, Paragraph, TextRun, HeadingLevel, AlignmentType } = docx;
+            const { Document, Paragraph, TextRun, HeadingLevel, AlignmentType, ImportedXmlComponent } = docx;
             
             // 处理带有数学公式的Markdown
             const sections = this.processMarkdownWithMath(markdown, mathExpressions);
@@ -86,34 +182,45 @@ class DocxGenerator {
                         break;
                     
                     case 'paragraph':
-                        // 处理带有行内公式的段落
                         if (section.hasMath) {
-                            const textRuns = [];
-                            
+                            const paragraphChildren = [];
+
                             for (const segment of section.segments) {
                                 if (segment.type === 'text') {
-                                    textRuns.push(
-                                        new TextRun({
-                                            text: segment.content
-                                        })
-                                    );
+                                    if (segment.content) {
+                                        paragraphChildren.push(
+                                            new TextRun({
+                                                text: segment.content
+                                            })
+                                        );
+                                    }
                                 } else if (segment.type === 'math') {
-                                    textRuns.push(
-                                        new TextRun({
-                                            text: segment.content,
-                                            italics: true
-                                        })
-                                    );
+                                    const inlineMath = this.createInlineMathRun(segment.omml, ImportedXmlComponent);
+
+                                    if (inlineMath) {
+                                        paragraphChildren.push(inlineMath);
+                                    } else {
+                                        const fallbackContent = segment.mathml || segment.rawTex;
+
+                                        if (fallbackContent) {
+                                            paragraphChildren.push(
+                                                new TextRun({
+                                                    text: fallbackContent
+                                                })
+                                            );
+                                        }
+                                    }
                                 }
                             }
-                            
-                            children.push(
-                                new Paragraph({
-                                    children: textRuns
-                                })
-                            );
+
+                            if (paragraphChildren.length > 0) {
+                                children.push(
+                                    new Paragraph({
+                                        children: paragraphChildren
+                                    })
+                                );
+                            }
                         } else {
-                            // 没有公式的普通段落
                             children.push(
                                 new Paragraph({
                                     text: section.content
@@ -121,17 +228,10 @@ class DocxGenerator {
                             );
                         }
                         break;
-                    
+
                     case 'display-math':
-                        // 块级公式居中显示
                         children.push(
-                            new Paragraph({
-                                text: section.content,
-                                alignment: AlignmentType.CENTER,
-                                style: {
-                                    italics: true
-                                }
-                            })
+                            this.createDisplayMathParagraph(section.omml, section.rawTex, section.mathml, Paragraph, ImportedXmlComponent)
                         );
                         break;
                     
@@ -223,7 +323,10 @@ class DocxGenerator {
                 if (math) {
                     sections.push({
                         type: 'display-math',
-                        content: math.original || math.content
+                        mathType: math.type,
+                        mathml: math.mathml || '',
+                        omml: math.omml || '',
+                        rawTex: math.content
                     });
                 } else {
                     sections.push({ type: 'paragraph', content: line });
@@ -267,7 +370,10 @@ class DocxGenerator {
                         if (math) {
                             segments.push({
                                 type: 'math',
-                                content: math.original || math.content
+                                mathType: math.type,
+                                mathml: math.mathml || '',
+                                omml: math.omml || '',
+                                rawTex: math.content
                             });
                         } else {
                             segments.push({ type: 'text', content: placeholder });
@@ -395,6 +501,7 @@ class MarkdownToWordConverter {
             MathJax.startup.promise.then(() => {
                 this.mathJaxLoaded = true;
                 console.log('MathJax loaded successfully');
+                this.updatePreview();
             }).catch(() => {
                 this.mathJaxLoaded = false;
                 console.log('MathJax failed to load');
@@ -402,6 +509,80 @@ class MarkdownToWordConverter {
         } else {
             setTimeout(() => this.checkMathJaxAvailability(), 1000);
         }
+    }
+
+    async ensureMathJaxReady() {
+        if (this.mathJaxLoaded && typeof MathJax !== 'undefined') {
+            return;
+        }
+
+        if (typeof MathJax !== 'undefined' && MathJax.startup && MathJax.startup.promise) {
+            try {
+                await MathJax.startup.promise;
+                this.mathJaxLoaded = true;
+            } catch (error) {
+                console.warn('MathJax 初始化失败，使用备用 MathML 生成逻辑。', error);
+            }
+        }
+    }
+
+    convertTeXToMathML(tex, isDisplay) {
+        if (!tex) {
+            return '';
+        }
+
+        if (this.mathJaxLoaded && typeof MathJax !== 'undefined' && typeof MathJax.tex2mml === 'function') {
+            try {
+                return MathJax.tex2mml(tex, { display: isDisplay });
+            } catch (error) {
+                console.warn('MathJax 转换 MathML 时出错，改用备用方案。', error);
+            }
+        }
+
+        return this.createFallbackMathML(tex, isDisplay);
+    }
+
+    createFallbackMathML(tex, isDisplay) {
+        const safeContent = escapeHtml(tex);
+        const displayAttr = isDisplay ? ' display="block"' : '';
+        return '<math xmlns="http://www.w3.org/1998/Math/MathML"' + displayAttr + '><mrow><mtext>' + safeContent + '</mtext></mrow></math>';
+    }
+
+    convertMathMLToOMML(mathML) {
+        if (!mathML || typeof window === 'undefined') {
+            return '';
+        }
+
+        if (typeof window.mml2omml !== 'function') {
+            return '';
+        }
+
+        try {
+            return window.mml2omml(mathML);
+        } catch (error) {
+            console.warn('MathML 转换为 OMML 时出错，将在 Word 中使用备用文本。', error);
+            return '';
+        }
+    }
+
+    populateMathExpressions(mathExpressions) {
+        if (!Array.isArray(mathExpressions)) {
+            return;
+        }
+
+        mathExpressions.forEach((math) => {
+            if (!math) {
+                return;
+            }
+
+            math.mathml = this.convertTeXToMathML(math.content, math.type === 'display');
+            math.omml = this.convertMathMLToOMML(math.mathml);
+        });
+    }
+
+    async prepareMathExpressions(mathExpressions) {
+        await this.ensureMathJaxReady();
+        this.populateMathExpressions(mathExpressions);
     }
 
     switchInputMethod(method) {
@@ -471,7 +652,9 @@ class MarkdownToWordConverter {
                 type: 'display',
                 content: content.trim(),
                 placeholder,
-                original: match
+                original: match,
+                mathml: null,
+                omml: null
             };
             mathIndex++;
             return placeholder;
@@ -483,7 +666,9 @@ class MarkdownToWordConverter {
                 type: 'display',
                 content: content.trim(),
                 placeholder,
-                original: match
+                original: match,
+                mathml: null,
+                omml: null
             };
             mathIndex++;
             return placeholder;
@@ -496,7 +681,9 @@ class MarkdownToWordConverter {
                 type: 'inline',
                 content: content.trim(),
                 placeholder,
-                original: match
+                original: match,
+                mathml: null,
+                omml: null
             };
             mathIndex++;
             return placeholder;
@@ -507,25 +694,48 @@ class MarkdownToWordConverter {
 
     // Restore math expressions after markdown processing
     restoreMath(html, mathExpressions) {
+        if (!Array.isArray(mathExpressions) || mathExpressions.length === 0) {
+            return html;
+        }
+
         mathExpressions.forEach((math) => {
+            if (!math || !math.placeholder) {
+                return;
+            }
+
+            const mathML = math.mathml || this.convertTeXToMathML(math.content, math.type === 'display');
+            const safeMathMarkup = mathML || this.createFallbackMathML(math.content, math.type === 'display');
+            const mathMLCode = escapeHtml(safeMathMarkup);
+
             if (math.type === 'display') {
-                html = html.replace(
-                    math.placeholder,
-                    `<div class="math-display">\\[${math.content}\\]</div>`
-                );
+                const replacement = `<div class="math-preview math-display" data-placeholder="${math.placeholder}">
+                        <div class="mathml-label">块级公式</div>
+                        <div class="mathml-formula">${safeMathMarkup}</div>
+                        <details class="mathml-source">
+                            <summary>查看 MathML 代码</summary>
+                            <pre class="mathml-code">${mathMLCode}</pre>
+                        </details>
+                    </div>`;
+                html = html.replace(math.placeholder, replacement);
             } else {
-                html = html.replace(
-                    math.placeholder,
-                    `<span class="math-inline">\\(${math.content}\\)</span>`
-                );
+                const replacement = `<span class="math-preview math-inline" data-placeholder="${math.placeholder}">
+                        <span class="mathml-label">行内公式</span>
+                        <span class="mathml-formula">${safeMathMarkup}</span>
+                        <details class="mathml-source">
+                            <summary>MathML</summary>
+                            <code class="mathml-code mathml-inline-code">${mathMLCode}</code>
+                        </details>
+                    </span>`;
+                html = html.replace(math.placeholder, replacement);
             }
         });
+
         return html;
     }
 
     updatePreview() {
         const markdownText = this.markdownInput.value;
-        
+
         if (!markdownText.trim()) {
             this.previewContent.innerHTML = '<p class="placeholder">输入 Markdown 文本后，预览将显示在这里</p>';
             return;
@@ -534,10 +744,13 @@ class MarkdownToWordConverter {
         try {
             // Preprocess math formulas
             const { text: processedText, mathExpressions } = this.preprocessMath(markdownText);
-            
+
+            // 准备 MathML 表达式
+            this.populateMathExpressions(mathExpressions);
+
             // Convert markdown to HTML
             let html = this.parser.parse(processedText);
-            
+
             // Restore math expressions
             html = this.restoreMath(html, mathExpressions);
             
@@ -553,8 +766,15 @@ class MarkdownToWordConverter {
     }
 
     renderMath() {
-        if (this.mathJaxLoaded && typeof MathJax !== 'undefined') {
-            MathJax.typesetPromise([this.previewContent]).catch((err) => {
+        if (this.mathJaxLoaded && typeof MathJax !== 'undefined' && this.previewContent) {
+            const mathContainers = Array.from(this.previewContent.querySelectorAll('.mathml-formula'));
+            const mathElements = mathContainers.flatMap((container) => Array.from(container.querySelectorAll('math')));
+
+            if (!mathElements.length) {
+                return;
+            }
+
+            MathJax.typesetPromise(mathElements).catch((err) => {
                 console.log('MathJax rendering error:', err);
             });
         }
@@ -562,7 +782,7 @@ class MarkdownToWordConverter {
 
     async convertToWord() {
         const markdownText = this.markdownInput.value;
-        
+
         if (!markdownText.trim()) {
             alert('请先输入一些 Markdown 文本');
             return;
@@ -579,7 +799,10 @@ class MarkdownToWordConverter {
             
             // 预处理数学公式
             const { text: processedText, mathExpressions } = this.preprocessMath(markdownText);
-            
+
+            // 确保 MathML 已准备好
+            await this.prepareMathExpressions(mathExpressions);
+
             // 使用docx.js生成Word文档
             const doc = await this.docxGenerator.generateWordDocument(processedText, mathExpressions);
             

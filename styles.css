@@ -265,13 +265,98 @@ main {
 }
 
 /* Math formula styling */
-.katex {
-    font-size: 1em;
+.math-preview {
+    border: 1px solid #dee2e6;
+    border-radius: 6px;
+    background-color: #f8f9fa;
+    padding: 12px;
+    margin: 12px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
 }
 
-.katex-display {
-    margin: 1em 0;
-    text-align: center;
+.math-display {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: 100%;
+    background-color: #eef2ff;
+    border-left: 4px solid #4c6ef5;
+    padding: 18px 20px;
+}
+
+.math-inline {
+    display: inline-flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 0 6px;
+    padding: 10px 12px;
+    align-items: flex-start;
+}
+
+.mathml-label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #495057;
+}
+
+.math-inline .mathml-label {
+    font-size: 0.75rem;
+}
+
+.mathml-formula {
+    display: block;
+    padding: 8px 10px;
+    background-color: #fff;
+    border-radius: 4px;
+    overflow-x: auto;
+}
+
+.mathml-formula math {
+    font-size: 1rem;
+}
+
+.math-display .mathml-formula {
+    padding: 16px;
+}
+
+.mathml-source {
+    font-size: 0.8rem;
+}
+
+.math-inline .mathml-source {
+    width: 100%;
+}
+
+.mathml-source summary {
+    cursor: pointer;
+    color: #4c6ef5;
+    font-weight: 600;
+    outline: none;
+}
+
+.mathml-source[open] summary {
+    margin-bottom: 6px;
+}
+
+.mathml-code {
+    display: block;
+    width: 100%;
+    overflow-x: auto;
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    border-radius: 6px;
+    line-height: 1.45;
+    background-color: #212529;
+    color: #f8f9fa;
+    padding: 10px 12px;
+}
+
+.mathml-inline-code {
+    display: block;
+    padding: 6px 8px;
+    font-size: 0.75rem;
+    white-space: pre-wrap;
 }
 
 footer {
