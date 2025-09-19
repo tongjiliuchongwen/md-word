@@ -1,65 +1,83 @@
+const WORD_NAMESPACE = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+const MATH_NAMESPACE = 'http://schemas.openxmlformats.org/officeDocument/2006/math';
+
 function escapeHtml(value) {
     if (value === undefined || value === null) {
         return '';
     }
 
-    const stringValue = String(value);
-
-    const map = {
-        '&': '&amp;',
-        '<': '&lt;',
-        '>': '&gt;',
-        '"': '&quot;',
-        "'": '&#39;'
-    };
-
-    return stringValue.replace(/[&<>"']/g, (char) => map[char]);
+    return String(value).replace(/[&<>"']/g, (char) => {
+        switch (char) {
+            case '&':
+                return '&amp;';
+            case '<':
+                return '&lt;';
+            case '>':
+                return '&gt;';
+            case '"':
+                return '&quot;';
+            case "'":
+                return '&#39;';
+            default:
+                return char;
+        }
+    });
 }
 
-// Simple Markdown to HTML converter
-class SimpleMarkdownParser {
+class MarkdownParser {
+    constructor() {
+        this.markedInitialized = false;
+    }
+
     parse(markdown) {
+        if (!markdown) {
+            return '';
+        }
+
+        if (window.marked && typeof window.marked.parse === 'function') {
+            if (!this.markedInitialized && typeof window.marked.setOptions === 'function') {
+                window.marked.setOptions({ breaks: true });
+                this.markedInitialized = true;
+            }
+
+            return window.marked.parse(markdown);
+        }
+
         let html = markdown;
-        
-        // Headers
-        html = html.replace(/^### (.*$)/gim, '<h3>$1</h3>');
-        html = html.replace(/^## (.*$)/gim, '<h2>$1</h2>');
-        html = html.replace(/^# (.*$)/gim, '<h1>$1</h1>');
-        
-        // Bold
-        html = html.replace(/\*\*(.*)\*\*/gim, '<strong>$1</strong>');
+
+        html = html.replace(/\r\n/g, '\n');
+
+        html = html.replace(/^######\s+(.*)$/gim, '<h6>$1</h6>');
+        html = html.replace(/^#####\s+(.*)$/gim, '<h5>$1</h5>');
+        html = html.replace(/^####\s+(.*)$/gim, '<h4>$1</h4>');
+        html = html.replace(/^###\s+(.*)$/gim, '<h3>$1</h3>');
+        html = html.replace(/^##\s+(.*)$/gim, '<h2>$1</h2>');
+        html = html.replace(/^#\s+(.*)$/gim, '<h1>$1</h1>');
+
+        html = html.replace(/\*\*(.*?)\*\*/gim, '<strong>$1</strong>');
         html = html.replace(/__(.*?)__/gim, '<strong>$1</strong>');
-        
-        // Italic
+
         html = html.replace(/\*(.*?)\*/gim, '<em>$1</em>');
         html = html.replace(/_(.*?)_/gim, '<em>$1</em>');
-        
-        // Code blocks
-        html = html.replace(/```([\s\S]*?)```/gim, '<pre><code>$1</code></pre>');
-        
-        // Inline code
+
         html = html.replace(/`([^`]+)`/gim, '<code>$1</code>');
-        
-        // Line breaks
-        html = html.replace(/\n\n/gim, '</p><p>');
-        html = html.replace(/\n/gim, '<br>');
-        
-        // Wrap in paragraphs
-        html = '<p>' + html + '</p>';
-        
-        // Clean up empty paragraphs and fix formatting
+
+        html = html.replace(/^>\s?(.*)$/gim, '<blockquote>$1</blockquote>');
+
+        html = html.replace(/\n\n+/g, '</p><p>');
+        html = html.replace(/\n/g, '<br>');
+
+        html = `<p>${html}</p>`;
+
         html = html.replace(/<p><\/p>/gim, '');
-        html = html.replace(/<p>(<h[1-6]>.*?<\/h[1-6]>)<\/p>/gim, '$1');
-        html = html.replace(/<p>(<pre>.*?<\/pre>)<\/p>/gim, '$1');
-        
+        html = html.replace(/<p>(<h[1-6][^>]*>.*?<\/h[1-6]>)<\/p>/gim, '$1');
+        html = html.replace(/<p>(<blockquote>.*?<\/blockquote>)<\/p>/gim, '$1');
+
         return html;
     }
 }
 
-// DocxGenerator class for creating Word documents with docx.js
 class DocxGenerator {
-    constructor() {}
-
     stripOmmlNamespaces(omml) {
         if (!omml) {
             return '';
@@ -70,13 +88,13 @@ class DocxGenerator {
             .replace(/\sxmlns:w="[^"]*"/g, '');
     }
 
-    createInlineMathRun(omml, ImportedXmlComponent) {
-        if (!omml || !ImportedXmlComponent) {
+    createInlineMathRun(math, ImportedXmlComponent) {
+        if (!math || !ImportedXmlComponent) {
             return null;
         }
 
-        const sanitizedOmml = this.stripOmmlNamespaces(omml);
-        if (!sanitizedOmml.trim()) {
+        const sanitizedOmml = this.stripOmmlNamespaces(math.omml);
+        if (!sanitizedOmml || !sanitizedOmml.trim()) {
             return null;
         }
 
@@ -92,17 +110,17 @@ class DocxGenerator {
         try {
             return ImportedXmlComponent.fromXmlString(runXml);
         } catch (error) {
-            console.warn('无法将 MathML 内联转换为 Word 运行，使用文本回退。', error);
+            console.warn('内联数学公式转换失败，使用文本回退。', error);
             return null;
         }
     }
 
-    createDisplayMathComponent(omml, ImportedXmlComponent) {
-        if (!omml || !ImportedXmlComponent) {
+    createDisplayMathComponent(math, ImportedXmlComponent) {
+        if (!math || !ImportedXmlComponent) {
             return null;
         }
 
-        let sanitizedOmml = this.stripOmmlNamespaces(omml).trim();
+        let sanitizedOmml = this.stripOmmlNamespaces(math.omml || '').trim();
         if (!sanitizedOmml) {
             return null;
         }
@@ -116,312 +134,315 @@ class DocxGenerator {
         try {
             return ImportedXmlComponent.fromXmlString(mathParaXml.trim());
         } catch (error) {
-            console.warn('无法创建块级数学组件，使用文本回退。', error);
+            console.warn('块级数学公式转换失败，使用文本回退。', error);
             return null;
         }
     }
 
-    createDisplayMathParagraph(omml, rawTex, mathml, Paragraph, ImportedXmlComponent) {
-        const mathComponent = this.createDisplayMathComponent(omml, ImportedXmlComponent);
+    createDisplayMathParagraph(math, Paragraph, ImportedXmlComponent, AlignmentType) {
+        const mathComponent = this.createDisplayMathComponent(math, ImportedXmlComponent);
 
         if (mathComponent) {
             return new Paragraph({
+                alignment: AlignmentType.CENTER,
                 children: [mathComponent]
             });
         }
 
         return new Paragraph({
-            text: mathml || rawTex || ''
+            alignment: AlignmentType.CENTER,
+            text: math ? math.content : ''
         });
     }
-    
-    async generateWordDocument(markdown, mathExpressions) {
-        try {
-            if (typeof docx === 'undefined') {
-                throw new Error('docx.js库未加载，请确保已正确引入docx.js');
-            }
-            
-            const { Document, Paragraph, TextRun, HeadingLevel, AlignmentType, ImportedXmlComponent } = docx;
-            
-            // 处理带有数学公式的Markdown
-            const sections = this.processMarkdownWithMath(markdown, mathExpressions);
-            
-            // 将sections转换为docx库需要的格式
-            const children = [];
-            
-            for (const section of sections) {
-                switch (section.type) {
-                    case 'heading1':
-                        children.push(
-                            new Paragraph({
-                                text: section.content,
-                                heading: HeadingLevel.HEADING_1
-                            })
-                        );
-                        break;
-                    
-                    case 'heading2':
-                        children.push(
-                            new Paragraph({
-                                text: section.content,
-                                heading: HeadingLevel.HEADING_2
-                            })
-                        );
-                        break;
-                    
-                    case 'heading3':
-                        children.push(
-                            new Paragraph({
-                                text: section.content,
-                                heading: HeadingLevel.HEADING_3
-                            })
-                        );
-                        break;
-                    
-                    case 'paragraph':
-                        if (section.hasMath) {
 
-
-                            for (const segment of section.segments) {
-                                if (segment.type === 'text') {
-                                    if (segment.content) {
-
-                                            new TextRun({
-                                                text: segment.content
-                                            })
-                                        );
-                                    }
-                                } else if (segment.type === 'math') {
-
-                        } else {
-                            children.push(
-                                new Paragraph({
-                                    text: section.content
-                                })
-                            );
-                        }
-                        break;
-
-                    case 'display-math':
-
-                        );
-                        break;
-                    
-                    case 'code':
-                        // 代码块使用等宽字体
-                        children.push(
-                            new Paragraph({
-                                text: section.content,
-                                font: {
-                                    name: "Courier New"
-                                }
-                            })
-                        );
-                        break;
-                }
-            }
-            
-            // 创建文档
-            const doc = new Document({
-                sections: [{
-                    children: children
-                }]
-            });
-            
-            return doc;
-        } catch (error) {
-            console.error('生成Word文档时出错:', error);
-            throw error;
-        }
-    }
-    
-    // 处理Markdown文本和数学公式
     processMarkdownWithMath(markdown, mathExpressions) {
         const sections = [];
-        const lines = markdown.split('\n');
-        
-        let currentParagraph = '';
-        
-        // 构建一个查找表，用于快速查找占位符对应的公式
-        const mathLookup = {};
-        mathExpressions.forEach(math => {
+        const lines = markdown.split(/\r?\n/);
+        const mathLookup = new Map();
+
+        (mathExpressions || []).forEach((math) => {
             if (math && math.placeholder) {
-                mathLookup[math.placeholder] = math;
+                mathLookup.set(math.placeholder, math);
             }
         });
-        
-        for (let i = 0; i < lines.length; i++) {
-            const line = lines[i];
-            
-            // 处理标题
-            if (line.startsWith('# ')) {
-                if (currentParagraph) {
-                    sections.push({ type: 'paragraph', content: currentParagraph });
-                    currentParagraph = '';
-                }
-                sections.push({ type: 'heading1', content: line.substring(2) });
-                continue;
+
+        let inCodeBlock = false;
+        let codeBuffer = [];
+        let paragraphBuffer = [];
+
+        const flushParagraph = () => {
+            if (paragraphBuffer.length === 0) {
+                return;
             }
-            
-            if (line.startsWith('## ')) {
-                if (currentParagraph) {
-                    sections.push({ type: 'paragraph', content: currentParagraph });
-                    currentParagraph = '';
-                }
-                sections.push({ type: 'heading2', content: line.substring(3) });
-                continue;
+
+            const paragraphText = paragraphBuffer.join(' ').trim();
+            paragraphBuffer = [];
+
+            if (!paragraphText) {
+                return;
             }
-            
-            if (line.startsWith('### ')) {
-                if (currentParagraph) {
-                    sections.push({ type: 'paragraph', content: currentParagraph });
-                    currentParagraph = '';
-                }
-                sections.push({ type: 'heading3', content: line.substring(4) });
-                continue;
-            }
-            
-            // 检查是否为数学公式占位符
-            const displayMathMatch = line.match(/^(__MATH_DISPLAY_\d+__)$/);
-            if (displayMathMatch) {
-                if (currentParagraph) {
-                    sections.push({ type: 'paragraph', content: currentParagraph });
-                    currentParagraph = '';
+
+            if (/__MATH_INLINE_\d+__/.test(paragraphText)) {
+                const inlineRegex = /__MATH_INLINE_\d+__/g;
+                const segments = [];
+                let lastIndex = 0;
+                let match;
+
+                while ((match = inlineRegex.exec(paragraphText)) !== null) {
+                    if (match.index > lastIndex) {
+                        segments.push({
+                            type: 'text',
+                            content: paragraphText.substring(lastIndex, match.index)
+                        });
+                    }
+
+                    const placeholder = match[0];
+                    const math = mathLookup.get(placeholder);
+
+                    if (math) {
+                        segments.push({ type: 'math', math });
+                    } else {
+                        segments.push({ type: 'text', content: placeholder });
+                    }
+
+                    lastIndex = inlineRegex.lastIndex;
                 }
 
-                const placeholder = displayMathMatch[1];
-                const math = mathLookup[placeholder];
-
-                if (math) {
-                    sections.push({
-                        type: 'display-math',
-
-                        rawTex: math.content
+                if (lastIndex < paragraphText.length) {
+                    segments.push({
+                        type: 'text',
+                        content: paragraphText.substring(lastIndex)
                     });
-                } else {
-                    sections.push({ type: 'paragraph', content: line });
                 }
-                continue;
-            }
-            
-            // 检查是否是空行（段落分隔符）
-            if (line.trim() === '') {
-                if (currentParagraph) {
-                    sections.push({ type: 'paragraph', content: currentParagraph });
-                    currentParagraph = '';
-                }
-                continue;
-            }
-            
-            // 处理行内公式
-            if (line.includes('__MATH_INLINE_')) {
-                // 检查这一行是否包含行内公式
-                const hasMath = /(__MATH_INLINE_\d+__)/.test(line);
-                
+
+                const hasMath = segments.some((segment) => segment.type === 'math');
+
                 if (hasMath) {
-                    // 分割文本和公式
-                    const segments = [];
-                    // 提取所有行内公式
-                    const inlineMathRegex = /__MATH_INLINE_\d+__/g;
-                    let match;
-                    let lastIndex = 0;
-
-                    while ((match = inlineMathRegex.exec(line)) !== null) {
-                        // 添加公式前的文本
-                        const beforeMath = line.substring(lastIndex, match.index);
-                        if (beforeMath) {
-                            segments.push({ type: 'text', content: beforeMath });
-                        }
-                        
-                        // 添加公式
-                        const placeholder = match[0];
-                        const math = mathLookup[placeholder];
-
-                        if (math) {
-                            segments.push({
-                                type: 'math',
-
-                            });
-                        } else {
-                            segments.push({ type: 'text', content: placeholder });
-                        }
-
-                        lastIndex = match.index + match[0].length;
-                    }
-                    
-                    // 添加最后一个公式后的文本
-                    const afterLastMath = line.substring(lastIndex);
-                    if (afterLastMath) {
-                        segments.push({ type: 'text', content: afterLastMath });
-                    }
-                    
-                    if (currentParagraph) {
-                        sections.push({ type: 'paragraph', content: currentParagraph });
-                        currentParagraph = '';
-                    }
-                    
-                    sections.push({ 
-                        type: 'paragraph', 
-                        hasMath: true, 
-                        segments: segments 
-                    });
-                    continue;
+                    sections.push({ type: 'paragraph', hasMath: true, segments });
+                    return;
                 }
+
+                sections.push({ type: 'paragraph', content: paragraphText });
+                return;
             }
-            
-            // 普通文本行
-            if (currentParagraph) {
-                currentParagraph += ' ' + line;
-            } else {
-                currentParagraph = line;
+
+            sections.push({ type: 'paragraph', content: paragraphText });
+        };
+
+        const flushCodeBlock = () => {
+            if (!inCodeBlock) {
+                return;
             }
+
+            sections.push({
+                type: 'code',
+                content: codeBuffer.join('\n')
+            });
+
+            inCodeBlock = false;
+            codeBuffer = [];
+        };
+
+        for (const rawLine of lines) {
+            const line = rawLine || '';
+            const trimmed = line.trim();
+
+            if (/^```/.test(trimmed)) {
+                if (inCodeBlock) {
+                    flushCodeBlock();
+                } else {
+                    flushParagraph();
+                    inCodeBlock = true;
+                }
+                continue;
+            }
+
+            if (inCodeBlock) {
+                codeBuffer.push(line);
+                continue;
+            }
+
+            if (!trimmed) {
+                flushParagraph();
+                continue;
+            }
+
+            const headingMatch = trimmed.match(/^(#{1,6})\s+(.*)$/);
+            if (headingMatch) {
+                flushParagraph();
+                const level = headingMatch[1].length;
+                const type = `heading${level}`;
+                sections.push({ type, content: headingMatch[2].trim() });
+                continue;
+            }
+
+            const displayMatch = trimmed.match(/^__MATH_DISPLAY_\d+__$/);
+            if (displayMatch) {
+                flushParagraph();
+                const math = mathLookup.get(displayMatch[0]);
+                if (math) {
+                    sections.push({ type: 'display-math', math });
+                } else {
+                    sections.push({ type: 'paragraph', content: trimmed });
+                }
+                continue;
+            }
+
+            paragraphBuffer.push(line);
         }
-        
-        // 添加最后的段落
-        if (currentParagraph) {
-            sections.push({ type: 'paragraph', content: currentParagraph });
-        }
-        
+
+        flushParagraph();
+        flushCodeBlock();
+
         return sections;
     }
-    
-    // 保存并下载文档
-    async saveDocumentToFile(doc, filename) {
-        try {
-            // 使用docx库的Packer来打包文档
-            const { Packer } = docx;
 
-            if (!Packer || typeof Packer.toBlob !== 'function') {
-                throw new Error('当前 docx.js 版本不支持直接保存文档，请检查库是否正确加载');
-            }
-
-            const blob = await Packer.toBlob(doc);
-            
-            // 创建下载链接
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            document.body.appendChild(a);
-            a.style.display = "none";
-            a.href = url;
-            a.download = filename;
-            a.click();
-            
-            // 清理
-            window.URL.revokeObjectURL(url);
-            document.body.removeChild(a);
-        } catch (error) {
-            console.error('保存文档时出错:', error);
-            throw error;
+    async generateWordDocument(markdown, mathExpressions) {
+        if (typeof docx === 'undefined') {
+            throw new Error('docx.js 库未加载');
         }
+
+        const { Document, Paragraph, TextRun, HeadingLevel, AlignmentType, ImportedXmlComponent } = docx;
+        const sections = this.processMarkdownWithMath(markdown, mathExpressions);
+        const children = [];
+
+        sections.forEach((section) => {
+            switch (section.type) {
+                case 'heading1':
+                    children.push(new Paragraph({
+                        text: section.content,
+                        heading: HeadingLevel.HEADING_1
+                    }));
+                    break;
+                case 'heading2':
+                    children.push(new Paragraph({
+                        text: section.content,
+                        heading: HeadingLevel.HEADING_2
+                    }));
+                    break;
+                case 'heading3':
+                    children.push(new Paragraph({
+                        text: section.content,
+                        heading: HeadingLevel.HEADING_3
+                    }));
+                    break;
+                case 'heading4':
+                    children.push(new Paragraph({
+                        text: section.content,
+                        heading: HeadingLevel.HEADING_4
+                    }));
+                    break;
+                case 'heading5':
+                    children.push(new Paragraph({
+                        text: section.content,
+                        heading: HeadingLevel.HEADING_5
+                    }));
+                    break;
+                case 'heading6':
+                    children.push(new Paragraph({
+                        text: section.content,
+                        heading: HeadingLevel.HEADING_6
+                    }));
+                    break;
+                case 'display-math': {
+                    const paragraph = this.createDisplayMathParagraph(
+                        section.math,
+                        Paragraph,
+                        ImportedXmlComponent,
+                        AlignmentType
+                    );
+                    children.push(paragraph);
+                    break;
+                }
+                case 'code': {
+                    const codeLines = String(section.content || '').split('\n');
+                    const codeRuns = [];
+
+                    codeLines.forEach((line, index) => {
+                        codeRuns.push(
+                            new TextRun({
+                                text: line,
+                                font: 'Courier New',
+                                break: index === 0 ? undefined : 1
+                            })
+                        );
+                    });
+
+                    children.push(new Paragraph({ children: codeRuns }));
+                    break;
+                }
+                case 'paragraph':
+                default: {
+                    if (section.hasMath && Array.isArray(section.segments)) {
+                        const inlineChildren = [];
+                        section.segments.forEach((segment) => {
+                            if (segment.type === 'math') {
+                                const mathComponent = this.createInlineMathRun(
+                                    segment.math,
+                                    ImportedXmlComponent
+                                );
+                                if (mathComponent) {
+                                    inlineChildren.push(mathComponent);
+                                } else if (segment.math) {
+                                    inlineChildren.push(
+                                        new TextRun({ text: segment.math.content })
+                                    );
+                                }
+                            } else if (segment.type === 'text' && segment.content) {
+                                inlineChildren.push(new TextRun({ text: segment.content }));
+                            }
+                        });
+
+                        if (inlineChildren.length > 0) {
+                            children.push(new Paragraph({ children: inlineChildren }));
+                        }
+                    } else if (section.content) {
+                        children.push(new Paragraph({ text: section.content }));
+                    }
+                    break;
+                }
+            }
+        });
+
+        const doc = new Document({
+            sections: [
+                {
+                    children
+                }
+            ]
+        });
+
+        return doc;
+    }
+
+    async saveDocumentToFile(doc, filename) {
+        const { Packer } = docx;
+
+        if (!Packer || typeof Packer.toBlob !== 'function') {
+            throw new Error('当前 docx.js 版本不支持保存文档');
+        }
+
+        const blob = await Packer.toBlob(doc);
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+
+        link.style.display = 'none';
+        link.href = url;
+        link.download = filename;
+
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        window.URL.revokeObjectURL(url);
     }
 }
 
-// Main application class
 class MarkdownToWordConverter {
     constructor() {
-        this.parser = new SimpleMarkdownParser();
+        this.parser = new MarkdownParser();
         this.docxGenerator = new DocxGenerator();
         this.mathJaxLoaded = false;
+
         this.initializeElements();
         this.setupEventListeners();
         this.checkMathJaxAvailability();
@@ -439,47 +460,49 @@ class MarkdownToWordConverter {
     }
 
     setupEventListeners() {
-        // Text input changes
-        this.markdownInput.addEventListener('input', () => this.updatePreview());
-        
-        // Convert button
-        this.convertBtn.addEventListener('click', () => this.convertToWord());
-        
-        // Input method switching
-        this.inputMethodRadios.forEach(radio => {
+        if (this.markdownInput) {
+            this.markdownInput.addEventListener('input', () => this.updatePreview());
+        }
+
+        if (this.convertBtn) {
+            this.convertBtn.addEventListener('click', () => this.convertToWord());
+        }
+
+        this.inputMethodRadios.forEach((radio) => {
             radio.addEventListener('change', () => this.switchInputMethod(radio.value));
         });
-        
-        // File input
-        this.fileInputElement.addEventListener('change', (e) => this.handleFileSelect(e));
-        
-        // Drag and drop
-        this.fileDropZone.addEventListener('dragover', (e) => this.handleDragOver(e));
-        this.fileDropZone.addEventListener('dragleave', (e) => this.handleDragLeave(e));
-        this.fileDropZone.addEventListener('drop', (e) => this.handleDrop(e));
-        
-        // Initial preview update
+
+        if (this.fileInputElement) {
+            this.fileInputElement.addEventListener('change', (event) => this.handleFileSelect(event));
+        }
+
+        if (this.fileDropZone) {
+            this.fileDropZone.addEventListener('dragover', (event) => this.handleDragOver(event));
+            this.fileDropZone.addEventListener('dragleave', (event) => this.handleDragLeave(event));
+            this.fileDropZone.addEventListener('drop', (event) => this.handleDrop(event));
+        }
+
         this.updatePreview();
     }
 
     checkMathJaxAvailability() {
-        // Check if MathJax is available
-        if (typeof MathJax !== 'undefined') {
-            MathJax.startup.promise.then(() => {
-                this.mathJaxLoaded = true;
-                console.log('MathJax loaded successfully');
-                this.updatePreview();
-            }).catch(() => {
-                this.mathJaxLoaded = false;
-                console.log('MathJax failed to load');
-            });
+        if (typeof MathJax !== 'undefined' && MathJax.startup && MathJax.startup.promise) {
+            MathJax.startup.promise
+                .then(() => {
+                    this.mathJaxLoaded = true;
+                    this.renderMath();
+                })
+                .catch((error) => {
+                    console.warn('MathJax 加载失败，将使用回退方案。', error);
+                    this.mathJaxLoaded = false;
+                });
         } else {
-            setTimeout(() => this.checkMathJaxAvailability(), 1000);
+            setTimeout(() => this.checkMathJaxAvailability(), 500);
         }
     }
 
     async ensureMathJaxReady() {
-        if (this.mathJaxLoaded && typeof MathJax !== 'undefined') {
+        if (this.mathJaxLoaded && typeof MathJax !== 'undefined' && MathJax.startup) {
             return;
         }
 
@@ -488,7 +511,7 @@ class MarkdownToWordConverter {
                 await MathJax.startup.promise;
                 this.mathJaxLoaded = true;
             } catch (error) {
-                console.warn('MathJax 初始化失败，使用备用 MathML 生成逻辑。', error);
+                console.warn('等待 MathJax 初始化失败，使用回退方案。', error);
             }
         }
     }
@@ -498,11 +521,15 @@ class MarkdownToWordConverter {
             return '';
         }
 
-        if (this.mathJaxLoaded && typeof MathJax !== 'undefined' && typeof MathJax.tex2mml === 'function') {
+        if (
+            this.mathJaxLoaded &&
+            typeof MathJax !== 'undefined' &&
+            typeof MathJax.tex2mml === 'function'
+        ) {
             try {
                 return MathJax.tex2mml(tex, { display: isDisplay });
             } catch (error) {
-                console.warn('MathJax 转换 MathML 时出错，改用备用方案。', error);
+                console.warn('MathJax 转换 MathML 失败，使用回退方案。', error);
             }
         }
 
@@ -512,9 +539,21 @@ class MarkdownToWordConverter {
     createFallbackMathML(tex, isDisplay) {
         const safeContent = escapeHtml(tex);
         const displayAttr = isDisplay ? ' display="block"' : '';
-        return '<math xmlns="http://www.w3.org/1998/Math/MathML"' + displayAttr + '><mrow><mtext>' + safeContent + '</mtext></mrow></math>';
+        return `<math xmlns="http://www.w3.org/1998/Math/MathML"${displayAttr}><mrow><mtext>${safeContent}</mtext></mrow></math>`;
     }
 
+    convertMathMLToOMML(mathml) {
+        if (!mathml || typeof window.mml2omml !== 'function') {
+            return '';
+        }
+
+        try {
+            return window.mml2omml(mathml);
+        } catch (error) {
+            console.warn('MathML 转换为 OMML 失败，将使用文本回退。', error);
+            return '';
+        }
+    }
 
     populateMathExpressions(mathExpressions) {
         if (!Array.isArray(mathExpressions)) {
@@ -527,27 +566,49 @@ class MarkdownToWordConverter {
             }
 
             math.mathml = this.convertTeXToMathML(math.content, math.type === 'display');
-
+            if (!math.original) {
+                if (math.type === 'display') {
+                    math.original = `$$${math.content}$$`;
+                } else {
+                    math.original = `$${math.content}$`;
+                }
+            }
         });
     }
 
     async prepareMathExpressions(mathExpressions) {
+        if (!Array.isArray(mathExpressions) || mathExpressions.length === 0) {
+            return;
+        }
+
         await this.ensureMathJaxReady();
         this.populateMathExpressions(mathExpressions);
+
+        mathExpressions.forEach((math) => {
+            if (!math) {
+                return;
+            }
+
+            if (!math.mathml) {
+                math.mathml = this.createFallbackMathML(math.content, math.type === 'display');
+            }
+
+            math.omml = this.convertMathMLToOMML(math.mathml);
+        });
     }
 
     switchInputMethod(method) {
         if (method === 'text') {
-            this.textInputDiv.classList.add('active');
-            this.fileInputDiv.classList.remove('active');
+            this.textInputDiv?.classList.add('active');
+            this.fileInputDiv?.classList.remove('active');
         } else {
-            this.textInputDiv.classList.remove('active');
-            this.fileInputDiv.classList.add('active');
+            this.textInputDiv?.classList.remove('active');
+            this.fileInputDiv?.classList.add('active');
         }
     }
 
     handleFileSelect(event) {
-        const file = event.target.files[0];
+        const file = event.target.files && event.target.files[0];
         if (file) {
             this.readFile(file);
         }
@@ -555,20 +616,20 @@ class MarkdownToWordConverter {
 
     handleDragOver(event) {
         event.preventDefault();
-        this.fileDropZone.classList.add('drag-over');
+        this.fileDropZone?.classList.add('drag-over');
     }
 
     handleDragLeave(event) {
         event.preventDefault();
-        this.fileDropZone.classList.remove('drag-over');
+        this.fileDropZone?.classList.remove('drag-over');
     }
 
     handleDrop(event) {
         event.preventDefault();
-        this.fileDropZone.classList.remove('drag-over');
-        
-        const files = event.dataTransfer.files;
-        if (files.length > 0) {
+        this.fileDropZone?.classList.remove('drag-over');
+
+        const files = event.dataTransfer?.files;
+        if (files && files.length > 0) {
             this.readFile(files[0]);
         }
     }
@@ -580,89 +641,96 @@ class MarkdownToWordConverter {
         }
 
         const reader = new FileReader();
-        reader.onload = (e) => {
-            this.markdownInput.value = e.target.result;
-            // Switch to text input method to show the content
-            document.querySelector('input[name="input-method"][value="text"]').checked = true;
-            this.switchInputMethod('text');
-            this.updatePreview();
+        reader.onload = (event) => {
+            const result = event.target?.result || '';
+            if (typeof result === 'string') {
+                this.markdownInput.value = result;
+                const textRadio = document.querySelector('input[name="input-method"][value="text"]');
+                if (textRadio) {
+                    textRadio.checked = true;
+                }
+                this.switchInputMethod('text');
+                this.updatePreview();
+            }
         };
+
         reader.readAsText(file);
     }
 
-    // Process math formulas in markdown text
     preprocessMath(text) {
-        // Store math expressions to prevent markdown processing
         const mathExpressions = [];
-        let mathIndex = 0;
+        let workingText = text;
+        let counter = 0;
 
-        // Handle display math $$...$$ and \[...\]
-        text = text.replace(/\$\$([\s\S]*?)\$\$/g, (match, content) => {
-            const placeholder = `__MATH_DISPLAY_${mathIndex}__`;
-            mathExpressions[mathIndex] = {
-                type: 'display',
+        const storeMath = (type, content, original) => {
+            const placeholder = type === 'display'
+                ? `__MATH_DISPLAY_${counter}__`
+                : `__MATH_INLINE_${counter}__`;
+
+            mathExpressions.push({
+                type,
                 content: content.trim(),
                 placeholder,
-                original: match,
+                original
+            });
 
-            };
-            mathIndex++;
+            counter += 1;
             return placeholder;
+        };
+
+        workingText = workingText.replace(/\$\$([\s\S]+?)\$\$/g, (match, content) => {
+            return storeMath('display', content, match);
         });
 
-        text = text.replace(/\\\[([\s\S]*?)\\\]/g, (match, content) => {
-            const placeholder = `__MATH_DISPLAY_${mathIndex}__`;
-            mathExpressions[mathIndex] = {
-                type: 'display',
-                content: content.trim(),
-                placeholder,
-                original: match,
-
-            };
-            mathIndex++;
-            return placeholder;
+        workingText = workingText.replace(/\\\[([\s\S]+?)\\\]/g, (match, content) => {
+            return storeMath('display', content, match);
         });
 
-        // Handle inline math $...$
-        text = text.replace(/\$([^$\n]+?)\$/g, (match, content) => {
-            const placeholder = `__MATH_INLINE_${mathIndex}__`;
-            mathExpressions[mathIndex] = {
-                type: 'inline',
-                content: content.trim(),
-                placeholder,
-                original: match,
-
-            };
-            mathIndex++;
-            return placeholder;
+        workingText = workingText.replace(/\\\(([\s\S]+?)\\\)/g, (match, content) => {
+            return storeMath('inline', content, match);
         });
 
-        return { text, mathExpressions };
+        workingText = workingText.replace(/(^|[^$\\])\$([^$\n]+?)\$(?!\$)/g, (fullMatch, prefix, content) => {
+            return `${prefix}${storeMath('inline', content, `$${content}$`)}`;
+        });
+
+        return {
+            text: workingText,
+            mathExpressions
+        };
     }
 
-    // Restore math expressions after markdown processing
     restoreMath(html, mathExpressions) {
         if (!Array.isArray(mathExpressions) || mathExpressions.length === 0) {
             return html;
         }
+
+        let result = html;
 
         mathExpressions.forEach((math) => {
             if (!math || !math.placeholder) {
                 return;
             }
 
-            const mathML = math.mathml || this.convertTeXToMathML(math.content, math.type === 'display');
-
-                    </span>`;
-                html = html.replace(math.placeholder, replacement);
-            }
+            const tex = math.original || (math.type === 'display' ? `$$${math.content}$$` : `$${math.content}$`);
+            const isDisplay = math.type === 'display';
+            const classes = isDisplay
+                ? 'math-expression math-display'
+                : 'math-expression math-inline';
+            const extraAttr = isDisplay ? ' style="display:block; text-align:center;"' : '';
+            const replacement = `<span class="${classes}" data-tex="${escapeHtml(math.content)}"${extraAttr}>${tex}</span>`;
+            result = result.split(math.placeholder).join(replacement);
         });
 
-        return html;
+        return result;
     }
 
     updatePreview() {
-        const markdownText = this.markdownInput.value;
+        if (!this.markdownInput || !this.previewContent) {
+            return;
+        }
+
+        const markdownText = this.markdownInput.value || '';
 
         if (!markdownText.trim()) {
             this.previewContent.innerHTML = '<p class="placeholder">输入 Markdown 文本后，预览将显示在这里</p>';
@@ -670,78 +738,70 @@ class MarkdownToWordConverter {
         }
 
         try {
-            // Preprocess math formulas
             const { text: processedText, mathExpressions } = this.preprocessMath(markdownText);
+            const html = this.parser.parse(processedText);
+            const htmlWithMath = this.restoreMath(html, mathExpressions);
 
-            // 准备 MathML 表达式
-            this.populateMathExpressions(mathExpressions);
-
-            // Convert markdown to HTML
-            let html = this.parser.parse(processedText);
-
-            // Restore math expressions
-            html = this.restoreMath(html, mathExpressions);
-            
-            this.previewContent.innerHTML = html;
-            
-            // Render math if MathJax is available
+            this.previewContent.innerHTML = htmlWithMath;
             this.renderMath();
-            
         } catch (error) {
-            console.error('Error processing markdown:', error);
-            this.previewContent.innerHTML = '<p style="color: red;">预览出现错误，请检查您的 Markdown 语法</p>';
+            console.error('预览渲染失败:', error);
+            this.previewContent.innerHTML = '<p style="color: red;">预览出现错误，请检查 Markdown 内容</p>';
         }
     }
 
     renderMath() {
-        if (this.mathJaxLoaded && typeof MathJax !== 'undefined' && this.previewContent) {
+        if (!this.previewContent) {
+            return;
+        }
 
-                console.log('MathJax rendering error:', err);
+        if (
+            this.mathJaxLoaded &&
+            typeof MathJax !== 'undefined' &&
+            typeof MathJax.typesetPromise === 'function'
+        ) {
+            MathJax.typesetClear?.([this.previewContent]);
+            MathJax.typesetPromise([this.previewContent]).catch((error) => {
+                console.warn('MathJax 渲染出错，使用原始文本显示。', error);
             });
         }
     }
 
     async convertToWord() {
-        const markdownText = this.markdownInput.value;
+        if (!this.markdownInput) {
+            return;
+        }
+
+        const markdownText = this.markdownInput.value || '';
 
         if (!markdownText.trim()) {
             alert('请先输入一些 Markdown 文本');
             return;
         }
 
-        this.convertBtn.disabled = true;
-        this.convertBtn.textContent = '转换中...';
-        
+        if (this.convertBtn) {
+            this.convertBtn.disabled = true;
+            this.convertBtn.textContent = '转换中...';
+        }
+
         try {
-            // 检查docx.js是否可用
-            if (typeof docx === 'undefined') {
-                throw new Error('docx.js库未加载，请确保已正确引入docx.js');
-            }
-            
-            // 预处理数学公式
             const { text: processedText, mathExpressions } = this.preprocessMath(markdownText);
-
-            // 确保 MathML 已准备好
             await this.prepareMathExpressions(mathExpressions);
-
-            // 使用docx.js生成Word文档
             const doc = await this.docxGenerator.generateWordDocument(processedText, mathExpressions);
-            
-            // 保存并下载文档
             const fileName = `markdown-document-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.docx`;
             await this.docxGenerator.saveDocumentToFile(doc, fileName);
-            
         } catch (error) {
-            console.error('Error converting to Word:', error);
+            console.error('转换为 Word 时发生错误:', error);
             alert(`转换过程中出现错误: ${error.message}`);
         } finally {
-            this.convertBtn.disabled = false;
-            this.convertBtn.textContent = '转换为 Word';
+            if (this.convertBtn) {
+                this.convertBtn.disabled = false;
+                this.convertBtn.textContent = '转换为 Word';
+            }
         }
     }
 }
 
-// Initialize the application when the page loads
 document.addEventListener('DOMContentLoaded', () => {
     new MarkdownToWordConverter();
 });
