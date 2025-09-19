@@ -78,6 +78,29 @@ class MarkdownParser {
 }
 
 class DocxGenerator {
+    unwrapImportedComponent(component) {
+        if (!component) {
+            return null;
+        }
+
+        if (component.rootKey) {
+            return component;
+        }
+
+        if (Array.isArray(component.root)) {
+            for (const child of component.root) {
+                if (child && typeof child === 'object') {
+                    const unwrapped = this.unwrapImportedComponent(child);
+                    if (unwrapped) {
+                        return unwrapped;
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
+
     stripOmmlNamespaces(omml) {
         if (!omml) {
             return '';
@@ -108,7 +131,9 @@ class DocxGenerator {
         `.trim();
 
         try {
-            return ImportedXmlComponent.fromXmlString(runXml);
+            const imported = ImportedXmlComponent.fromXmlString(runXml);
+            const component = this.unwrapImportedComponent(imported);
+            return component || null;
         } catch (error) {
             console.warn('内联数学公式转换失败，使用文本回退。', error);
             return null;
@@ -132,7 +157,9 @@ class DocxGenerator {
         const mathParaXml = `<m:oMathPara xmlns:m="${MATH_NAMESPACE}" xmlns:w="${WORD_NAMESPACE}">${sanitizedOmml}</m:oMathPara>`;
 
         try {
-            return ImportedXmlComponent.fromXmlString(mathParaXml.trim());
+            const imported = ImportedXmlComponent.fromXmlString(mathParaXml.trim());
+            const component = this.unwrapImportedComponent(imported);
+            return component || null;
         } catch (error) {
             console.warn('块级数学公式转换失败，使用文本回退。', error);
             return null;
