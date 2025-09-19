@@ -48,63 +48,57 @@ class DocxGenerator {
                 throw new Error('docx.js库未加载，请确保已正确引入docx.js');
             }
             
-            const { Document, Paragraph, TextRun, HeadingLevel, AlignmentType, BorderStyle } = docx;
-            
-            // 创建一个新的文档
-            const doc = new Document({
-                sections: [{
-                    properties: {},
-                    children: []
-                }]
-            });
+            const { Document, Paragraph, TextRun, HeadingLevel, AlignmentType } = docx;
             
             // 处理带有数学公式的Markdown
             const sections = this.processMarkdownWithMath(markdown, mathExpressions);
             
-            // 添加内容到文档
+            // 将sections转换为docx库需要的格式
+            const children = [];
+            
             for (const section of sections) {
                 switch (section.type) {
                     case 'heading1':
-                        doc.addParagraph(new Paragraph({
-                            text: section.content,
-                            heading: HeadingLevel.HEADING_1
-                        }));
+                        children.push(
+                            new Paragraph({
+                                text: section.content,
+                                heading: HeadingLevel.HEADING_1
+                            })
+                        );
                         break;
                     
                     case 'heading2':
-                        doc.addParagraph(new Paragraph({
-                            text: section.content,
-                            heading: HeadingLevel.HEADING_2
-                        }));
+                        children.push(
+                            new Paragraph({
+                                text: section.content,
+                                heading: HeadingLevel.HEADING_2
+                            })
+                        );
                         break;
                     
                     case 'heading3':
-                        doc.addParagraph(new Paragraph({
-                            text: section.content,
-                            heading: HeadingLevel.HEADING_3
-                        }));
+                        children.push(
+                            new Paragraph({
+                                text: section.content,
+                                heading: HeadingLevel.HEADING_3
+                            })
+                        );
                         break;
                     
                     case 'paragraph':
                         // 处理带有行内公式的段落
                         if (section.hasMath) {
-                            const children = [];
-                            let currentText = '';
+                            const textRuns = [];
                             
-                            for (let i = 0; i < section.segments.length; i++) {
-                                const segment = section.segments[i];
-                                
+                            for (const segment of section.segments) {
                                 if (segment.type === 'text') {
-                                    currentText += segment.content;
+                                    textRuns.push(
+                                        new TextRun({
+                                            text: segment.content
+                                        })
+                                    );
                                 } else if (segment.type === 'math') {
-                                    // 先添加前面的文本
-                                    if (currentText) {
-                                        children.push(new TextRun(currentText));
-                                        currentText = '';
-                                    }
-                                    
-                                    // 添加公式（使用斜体模拟，因为直接的公式支持有限）
-                                    children.push(
+                                    textRuns.push(
                                         new TextRun({
                                             text: segment.content,
                                             italics: true
@@ -113,47 +107,54 @@ class DocxGenerator {
                                 }
                             }
                             
-                            // 添加最后的文本
-                            if (currentText) {
-                                children.push(new TextRun(currentText));
-                            }
-                            
-                            doc.addParagraph(new Paragraph({ children }));
+                            children.push(
+                                new Paragraph({
+                                    children: textRuns
+                                })
+                            );
                         } else {
                             // 没有公式的普通段落
-                            doc.addParagraph(new Paragraph({
-                                text: section.content
-                            }));
+                            children.push(
+                                new Paragraph({
+                                    text: section.content
+                                })
+                            );
                         }
                         break;
                     
                     case 'display-math':
                         // 块级公式居中显示
-                        doc.addParagraph(new Paragraph({
-                            text: section.content,
-                            alignment: AlignmentType.CENTER,
-                            italics: true
-                        }));
+                        children.push(
+                            new Paragraph({
+                                text: section.content,
+                                alignment: AlignmentType.CENTER,
+                                style: {
+                                    italics: true
+                                }
+                            })
+                        );
                         break;
                     
                     case 'code':
-                        // 代码块使用等宽字体和边框
-                        doc.addParagraph(new Paragraph({
-                            text: section.content,
-                            style: {
-                                font: "Courier New",
-                                size: 20,
-                            },
-                            border: {
-                                top: { style: BorderStyle.SINGLE, size: 1, color: "auto" },
-                                bottom: { style: BorderStyle.SINGLE, size: 1, color: "auto" },
-                                left: { style: BorderStyle.SINGLE, size: 1, color: "auto" },
-                                right: { style: BorderStyle.SINGLE, size: 1, color: "auto" }
-                            }
-                        }));
+                        // 代码块使用等宽字体
+                        children.push(
+                            new Paragraph({
+                                text: section.content,
+                                font: {
+                                    name: "Courier New"
+                                }
+                            })
+                        );
                         break;
                 }
             }
+            
+            // 创建文档
+            const doc = new Document({
+                sections: [{
+                    children: children
+                }]
+            });
             
             return doc;
         } catch (error) {
