@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Markdown to Word Converter</title>
+    <link rel="stylesheet" href="styles.css">
+    <!-- MathJax for math rendering (more reliable than KaTeX for offline use) -->
+    <script>
+        window.MathJax = {
+            tex: {
+                inlineMath: [['$', '$'], ['\\(', '\\)']],
+                displayMath: [['$$', '$$'], ['\\[', '\\]']],
+                tags: 'ams'
+            },
+            options: {
+                skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre']
+            }
+        };
+    </script>
+    <script async src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
+    <script async id="MathJax-script" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    
+    <!-- Fallback libraries will be loaded by the app.js if CDN fails -->
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Markdown to Word 转换器</h1>
+            <p>支持数学公式的 Markdown 转 Word 文档工具</p>
+        </header>
+        
+        <main>
+            <div class="input-section">
+                <div class="input-header">
+                    <h2>输入 Markdown 文本</h2>
+                    <div class="input-options">
+                        <label>
+                            <input type="radio" name="input-method" value="text" checked> 直接输入
+                        </label>
+                        <label>
+                            <input type="radio" name="input-method" value="file"> 上传文件
+                        </label>
+                    </div>
+                </div>
+                
+                <div id="text-input" class="input-method active">
+                    <textarea id="markdown-input" placeholder="在这里输入你的 Markdown 文本...
+
+支持的数学公式格式：
+- 行内公式：$x^2 + y^2 = z^2$
+- 块级公式：$$\frac{n!}{k!(n-k)!} = \binom{n}{k}$$
+- LaTeX 格式：\[E = mc^2\]
+
+示例：
+# 标题
+这是一个包含数学公式的段落：$E = mc^2$
+
+$$
+\int_0^\infty e^{-x^2} dx = \frac{\sqrt{\pi}}{2}
+$$"></textarea>
+                </div>
+                
+                <div id="file-input" class="input-method">
+                    <div class="file-drop-zone" id="file-drop-zone">
+                        <p>拖拽 .md 文件到这里，或者点击选择文件</p>
+                        <input type="file" id="file-input-element" accept=".md,.txt" style="display: none;">
+                        <button type="button" onclick="document.getElementById('file-input-element').click()">选择文件</button>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="preview-section">
+                <div class="preview-header">
+                    <h2>预览</h2>
+                    <button id="convert-btn" class="convert-btn">转换为 Word</button>
+                </div>
+                <div id="preview-content" class="preview-content">
+                    <p class="placeholder">输入 Markdown 文本后，预览将显示在这里</p>
+                </div>
+            </div>
+        </main>
+        
+        <footer>
+            <p>支持的数学公式格式：$...$ (行内)、$$...$$ (块级)、\[...\] (LaTeX)</p>
+        </footer>
+    </div>
+    
+    <script src="app.js"></script>
+</body>
+</html>
