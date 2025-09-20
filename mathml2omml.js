@@ -722,10 +722,29 @@ function attrString(attribs) {
   return ` ${buff.join(' ')}`
 }
 
+function escapeXmlText(text) {
+  if (!text) {
+    return ''
+  }
+
+  return text.replace(/[&<>]/g, (char) => {
+    switch (char) {
+      case '&':
+        return '&amp;'
+      case '<':
+        return '&lt;'
+      case '>':
+        return '&gt;'
+      default:
+        return char
+    }
+  })
+}
+
 function stringify(buff, doc) {
   switch (doc.type) {
     case 'text':
-      return buff + doc.data
+      return buff + escapeXmlText(doc.data)
     case 'tag': {
       const voidElement =
         doc.voidElement || (!doc.children.length && doc.attribs['xml:space'] !== 'preserve')
