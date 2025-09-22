@@ -111,12 +111,30 @@ class DocxGenerator {
             .replace(/\sxmlns:w="[^"]*"/g, '');
     }
 
+    extractSingleOMath(omml) {
+        if (!omml) {
+            return '';
+        }
+
+        const trimmed = omml.trim();
+
+        if (/^<m:oMathPara\b/.test(trimmed)) {
+            const match = trimmed.match(/<m:oMath\b[\s\S]*?<\/m:oMath>/);
+            if (match) {
+                return match[0];
+            }
+        }
+
+        return trimmed;
+    }
+
     createInlineMathRun(math, ImportedXmlComponent) {
         if (!math || !ImportedXmlComponent) {
             return null;
         }
 
-        const sanitizedOmml = this.stripOmmlNamespaces(math.omml);
+        let sanitizedOmml = this.stripOmmlNamespaces(math.omml);
+        sanitizedOmml = this.extractSingleOMath(sanitizedOmml);
         if (!sanitizedOmml || !sanitizedOmml.trim()) {
             return null;
         }
@@ -150,7 +168,14 @@ class DocxGenerator {
             return null;
         }
 
-        if (!/^<m:oMath/.test(sanitizedOmml)) {
+        if (/^<m:oMathPara\b/.test(sanitizedOmml)) {
+            sanitizedOmml = sanitizedOmml
+                .replace(/^<m:oMathPara\b[^>]*>/, '')
+                .replace(/<\/m:oMathPara>\s*$/, '')
+                .trim();
+        }
+
+        if (!/^<m:oMath\b/.test(sanitizedOmml)) {
             sanitizedOmml = `<m:oMath>${sanitizedOmml}</m:oMath>`;
         }
 
